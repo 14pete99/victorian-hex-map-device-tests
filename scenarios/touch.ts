@@ -3,7 +3,7 @@
 import { expect, expectNear } from '../lib/fixtures';
 import type { PhoneTest } from '../lib/fixtures';
 import { astride, drag, dragFrames, offset, pinch, pinchFrames, tap } from '../lib/gestures';
-import { MAP, box, control, mapState, panLimit, seat, seatAt, show } from '../lib/map-page';
+import { MAP, box, clampZoom, control, mapState, panLimit, seat, seatAt, show, touchesSeen, watchTouches } from '../lib/map-page';
 import type { Frame, Phone, Point } from '../lib/phone';
 
 /** Taps the zoom-in button: 130%, then 169%. */
@@ -19,8 +19,33 @@ async function zoomInTwice(phone: Phone): Promise<void> {
 /** A frame repeated, for a finger that rests where it is. */
 const rest = (frame: Frame, frames = 5): Frame[] => Array.from({ length: frames }, () => frame);
 
+/**
+ * Checks a pinch against what the page received. The map's zoom must be the zoom it had, times however far the
+ * page saw the two fingers spread. The browser must not have magnified the page itself at any moment. And the
+ * fingers must have gone roughly where they were sent, or the test proves nothing.
+ */
+async function expectPinched(phone: Phone, zoomBefore: number, sent: number): Promise<void> {
+  const seen = await touchesSeen(phone);
+  if (!seen.pinch) throw new Error('the page did not see two fingers down together');
+  const spread = seen.pinch.last / seen.pinch.first;
+  expectNear((await mapState(phone)).zoom, clampZoom(zoomBefore * spread), 0.05, `zoom, from ${zoomBefore} with the fingers seen to spread ${spread.toFixed(3)} times`);
+  expectNear(spread, sent, sent * 0.1, 'how far the page saw the fingers spread, against how far they were sent');
+  expect(seen.scale, 'how much the browser magnified the page itself during the touch').toEqual({ min: 1, max: 1 });
+}
+
 /** Declares the touch tests on a `test` whose `phone` is whichever phone the project drives. */
 export function touchScenarios(test: PhoneTest): void {
+  test.beforeEach(async ({ phone }) => {
+    await watchTouches(phone);
+  });
+
+  // When a test fails, the page's own account of the touches it received says what the phone actually did.
+  test.afterEach(async ({ phone }, testInfo) => {
+    if (testInfo.status === testInfo.expectedStatus) return;
+    const seen = await touchesSeen(phone).catch(() => null);
+    if (seen) console.log(`What the page heard in "${testInfo.title}": ${seen.log.join(' | ')} || two fingers: ${JSON.stringify(seen.pinch)} || page magnified: ${JSON.stringify(seen.scale)}`);
+  });
+
   test.describe('the test phone', () => {
     test('sends trusted touch input to a page that believes it is on a phone', async ({ phone }) => {
       await phone.evaluate(() => {
@@ -32,7 +57,10 @@ export function touchScenarios(test: PhoneTest): void {
       });
       const map = await show(phone, MAP);
       await tap(phone, map.centre);
-      const seen = await phone.evaluate(() => (window as unknown as { seen: string[] }).seen);
+      const heard = () => phone.evaluate(() => (window as unknown as { seen: string[] }).seen);
+      // A click can follow the touch that caused it by a moment.
+      await expect.poll(async () => (await heard()).at(-1), { timeout: 3000 }).toBe('click, trusted true');
+      const seen = await heard();
       expect(seen.filter((entry) => entry.startsWith('pointer'))).toEqual(['pointerdown by touch, trusted true', 'pointerup by touch, trusted true']);
       expect(seen.filter((entry) => entry.startsWith('touch'))).toEqual(['touchstart, trusted true', 'touchend, trusted true']);
       expect(seen[seen.length - 1]).toBe('click, trusted true');
@@ -162,19 +190,20 @@ export function touchScenarios(test: PhoneTest): void {
       const map = await show(phone, MAP);
       const before = await mapState(phone);
       await pinch(phone, astride(map.centre, 80), astride(map.centre, 200));
-      const after = await mapState(phone);
-      expectNear(after.zoom, 2.5, 0.05, 'zoom after spreading 80px to 200px');
-      expect(after).toMatchObject({ pageScale: 1, scrollY: before.scrollY, selected: null, pointed: null });
+      await expectPinched(phone, 1, 200 / 80);
+      expect(await mapState(phone)).toMatchObject({ pageScale: 1, scrollY: before.scrollY, selected: null, pointed: null });
     });
 
     test('pinching them together zooms back out, and below 100% the map is centred again', async ({ phone }) => {
       const map = await show(phone, MAP);
       await pinch(phone, astride(map.centre, 80), astride(map.centre, 200));
       await drag(phone, offset(map.centre, 40, 0), offset(map.centre, -40, 0));
-      expectNear((await mapState(phone)).panX, -80, 1, 'pan across before pinching in');
+      const zoomedIn = await mapState(phone);
+      expectNear(zoomedIn.panX, -80, 1, 'pan across before pinching in');
       await pinch(phone, astride(map.centre, 250), astride(map.centre, 80));
+      await expectPinched(phone, zoomedIn.zoom, 80 / 250);
       const after = await mapState(phone);
-      expectNear(after.zoom, 0.8, 0.02, 'zoom after pinching 250px to 80px from 250%');
+      expect(after.zoom, 'zoom after pinching in').toBeLessThan(1);
       expect(after).toMatchObject({ panX: 0, panY: 0, pageScale: 1 });
     });
 
@@ -196,7 +225,7 @@ export function touchScenarios(test: PhoneTest): void {
       const before = (await box(phone, seat(name))).centre;
       await pinch(phone, astride(before, 60), astride(before, 180));
       const after = (await box(phone, seat(name))).centre;
-      expectNear((await mapState(phone)).zoom, 3, 0.05, 'zoom after spreading 60px to 180px');
+      await expectPinched(phone, 1, 180 / 60);
       expectNear(after.x, before.x, 2, 'the seat across the screen');
       expectNear(after.y, before.y, 2, 'the seat down the screen');
     });
@@ -207,7 +236,7 @@ export function touchScenarios(test: PhoneTest): void {
       const before = await mapState(phone);
       await pinch(phone, astride(offset(map.centre, 30, 20), 120), astride(offset(map.centre, -20, -10), 120));
       const after = await mapState(phone);
-      expectNear(after.zoom, before.zoom, 0.02, 'zoom');
+      await expectPinched(phone, before.zoom, 1);
       expectNear(after.panX, -50, 2, 'pan across');
       expectNear(after.panY, -30, 2, 'pan down');
       expect(after).toMatchObject({ scrollY: before.scrollY, pageScale: 1 });
@@ -222,7 +251,7 @@ export function touchScenarios(test: PhoneTest): void {
         ...dragFrames(left, offset(left, -40, -30)).map(([finger]) => [finger, null]),
       ]);
       const after = await mapState(phone);
-      expectNear(after.zoom, 2.5, 0.05, 'zoom');
+      await expectPinched(phone, 1, 200 / 80);
       expectNear(after.panX, -40, 2, 'pan across');
       expectNear(after.panY, -30, 2, 'pan down');
       expect(after).toMatchObject({ scrollY: before.scrollY, pageScale: 1, selected: null, pointed: null });
@@ -233,9 +262,8 @@ export function touchScenarios(test: PhoneTest): void {
       const before = await mapState(phone);
       const [left, right] = astride(map.centre, 80);
       await phone.gesture([...rest([left, null]), ...pinchFrames([left, right], astride(map.centre, 200))]);
-      const after = await mapState(phone);
-      expectNear(after.zoom, 2.5, 0.05, 'zoom');
-      expect(after).toMatchObject({ pageScale: 1, scrollY: before.scrollY, selected: null, pointed: null });
+      await expectPinched(phone, 1, 200 / 80);
+      expect(await mapState(phone)).toMatchObject({ pageScale: 1, scrollY: before.scrollY, selected: null, pointed: null });
     });
 
     test('a second finger that lands while the first has drifted a little still makes a pinch', async ({ phone }) => {
@@ -244,9 +272,8 @@ export function touchScenarios(test: PhoneTest): void {
       const [left, right] = astride(map.centre, 80);
       const drifted = offset(left, -3, 3);
       await phone.gesture([[left, null], [offset(left, -1, 1), null], [offset(left, -2, 2), null], [drifted, null], ...pinchFrames([drifted, right], astride(map.centre, 200))]);
-      const after = await mapState(phone);
-      expectNear(after.zoom, 200 / Math.hypot(right.x - drifted.x, right.y - drifted.y), 0.05, 'zoom');
-      expect(after).toMatchObject({ pageScale: 1, scrollY: before.scrollY, selected: null, pointed: null });
+      await expectPinched(phone, 1, 200 / Math.hypot(right.x - drifted.x, right.y - drifted.y));
+      expect(await mapState(phone)).toMatchObject({ pageScale: 1, scrollY: before.scrollY, selected: null, pointed: null });
     });
 
     test('a second finger that only touches during a drag does not make the map jump', async ({ phone }) => {
@@ -262,7 +289,8 @@ export function touchScenarios(test: PhoneTest): void {
         ...dragFrames(middle, end).map(([finger]): Frame => [finger, null]),
       ]);
       const after = await mapState(phone);
-      expectNear(after.zoom, 1.69, 0.001, 'zoom');
+      // Two fingers that both stay still are a pinch of no size: the zoom keeps to what it was.
+      await expectPinched(phone, 1.69, 1);
       expectNear(after.panX, -80, 2, 'pan across');
       expectNear(after.panY, -45, 2, 'pan down');
       expect(after).toMatchObject({ pageScale: 1, selected: null, pointed: null });
@@ -296,7 +324,7 @@ export function touchScenarios(test: PhoneTest): void {
         ...dragFrames(third, offset(third, 40, 20)).map(([finger]): Frame => [wideLeft, wideRight, finger]),
       ]);
       const after = await mapState(phone);
-      expectNear(after.zoom, 2.5, 0.05, 'zoom');
+      await expectPinched(phone, 1, 200 / 80);
       expectNear(after.panX, 0, 2, 'pan across');
       expectNear(after.panY, 0, 2, 'pan down');
       expect(after).toMatchObject({ pageScale: 1, selected: null, pointed: null });

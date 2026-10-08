@@ -118,8 +118,9 @@ export async function appiumPhone(driver: Browser): Promise<Phone> {
       // two frames, which is to say a tap, is held for three.
       const held = frames.length > 0 && frames.length < 3 ? [...frames, ...Array.from({ length: 3 - frames.length }, () => frames[frames.length - 1])] : frames;
       await play(toActions(held, onScreen, APPIUM_FRAME_MS));
-      // Long enough for the browser to have drawn whatever the gesture changed.
-      await driver.pause(80);
+      // Long enough for the browser to have drawn whatever the gesture changed, and for a click to have
+      // followed a tap: Safari can take a third of a second over that.
+      await driver.pause(400);
     },
   };
 }

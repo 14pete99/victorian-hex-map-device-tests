@@ -69,6 +69,98 @@ export function seatAt(phone: Phone, point: Point): Promise<string | null> {
   return phone.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest<SVGElement>('g.hex')?.dataset.seat ?? null, point);
 }
 
+export interface TouchesSeen {
+  /** What the page heard, in order: milliseconds since it began listening, then the event. */
+  log: string[];
+  /** How far apart the first two fingers were when the second came down, and when either last moved. Null if two never met. */
+  pinch: { first: number; last: number } | null;
+  /** The least and the most the browser itself magnified the page while it was being touched. */
+  scale: { min: number; max: number };
+}
+
+/**
+ * Has the page keep its own account of the touches it receives. A test sends fingers to exact places, but a
+ * phone delivers them a little differently, a few pixels off or a moment late, and the map can only be judged
+ * against what reached it.
+ */
+export function watchTouches(phone: Phone): Promise<void> {
+  return phone.evaluate(() => {
+    const log: string[] = [];
+    const down = new Map<number, { x: number; y: number }>();
+    const seen: { log: string[]; pinch: { first: number; last: number } | null; scale: { min: number; max: number } } = { log, pinch: null, scale: { min: 1, max: 1 } };
+    let pair: [number, number] | null = null;
+    const began = performance.now();
+    const note = (text: string) => {
+      if (log.length < 300) log.push(`${Math.round(performance.now() - began)} ${text}`);
+    };
+    const sample = () => {
+      const scale = window.visualViewport?.scale ?? 1;
+      seen.scale.min = Math.min(seen.scale.min, scale);
+      seen.scale.max = Math.max(seen.scale.max, scale);
+    };
+    const apart = () => {
+      const first = pair && down.get(pair[0]);
+      const second = pair && down.get(pair[1]);
+      return first && second ? Math.hypot(first.x - second.x, first.y - second.y) : null;
+    };
+    const at = (event: PointerEvent) => `#${event.pointerId}${event.isPrimary ? '*' : ''} ${Math.round(event.clientX)},${Math.round(event.clientY)}`;
+    document.addEventListener(
+      'pointerdown',
+      (event) => {
+        if (event.pointerType !== 'touch') return;
+        if (event.isPrimary) {
+          down.clear();
+          pair = null;
+        }
+        down.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        if (down.size === 2 && !pair) {
+          const [first, second] = down.keys();
+          pair = [first, second];
+          const distance = apart() ?? 0;
+          seen.pinch = { first: distance, last: distance };
+        }
+        note(`down ${at(event)}`);
+        sample();
+      },
+      true,
+    );
+    document.addEventListener(
+      'pointermove',
+      (event) => {
+        if (!down.has(event.pointerId)) return;
+        down.set(event.pointerId, { x: event.clientX, y: event.clientY });
+        const distance = pair?.includes(event.pointerId) ? apart() : null;
+        if (seen.pinch && distance !== null) seen.pinch.last = distance;
+        sample();
+      },
+      true,
+    );
+    for (const type of ['pointerup', 'pointercancel'] as const) {
+      document.addEventListener(
+        type,
+        (event) => {
+          if (!down.has(event.pointerId)) return;
+          note(`${type === 'pointerup' ? 'up' : 'cancel'} ${at(event)}`);
+          if (pair?.includes(event.pointerId)) pair = null;
+          down.delete(event.pointerId);
+          sample();
+        },
+        true,
+      );
+    }
+    document.addEventListener('click', (event) => note(`click on ${(event.target as Element).closest<SVGElement>('g.hex')?.dataset.seat ?? (event.target as HTMLElement).dataset?.testid ?? (event.target as Element).tagName}`), true);
+    window.visualViewport?.addEventListener('resize', sample);
+    Object.assign(window, { touchesSeen: seen });
+  });
+}
+
+export function touchesSeen(phone: Phone): Promise<TouchesSeen> {
+  return phone.evaluate(() => (window as unknown as { touchesSeen: TouchesSeen }).touchesSeen);
+}
+
+/** The zoom's limits, as in the map's `ZOOM`. */
+export const clampZoom = (zoom: number) => Math.min(4, Math.max(0.5, zoom));
+
 /** How far the map may be panned at a zoom before it stops: the rule in HexMap's `settle`. */
 export function panLimit(zoom: number, size: number): number {
   return ((zoom - 1) * size) / 2 + size * 0.25;
