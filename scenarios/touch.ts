@@ -30,7 +30,7 @@ async function expectPinched(phone: Phone, zoomBefore: number, sent: number): Pr
   const spread = seen.pinch.last / seen.pinch.first;
   expectNear((await mapState(phone)).zoom, clampZoom(zoomBefore * spread), 0.05, `zoom, from ${zoomBefore} with the fingers seen to spread ${spread.toFixed(3)} times`);
   expectNear(spread, sent, sent * 0.1, 'how far the page saw the fingers spread, against how far they were sent');
-  expect(seen.scale, 'how much the browser magnified the page itself during the touch').toEqual({ min: 1, max: 1 });
+  expect(seen.magnified, 'how much the browser magnified the page itself during the touch').toEqual({ least: 1, most: 1 });
 }
 
 /** Declares the touch tests on a `test` whose `phone` is whichever phone the project drives. */
@@ -43,7 +43,7 @@ export function touchScenarios(test: PhoneTest): void {
   test.afterEach(async ({ phone }, testInfo) => {
     if (testInfo.status === testInfo.expectedStatus) return;
     const seen = await touchesSeen(phone).catch(() => null);
-    if (seen) console.log(`What the page heard in "${testInfo.title}": ${seen.log.join(' | ')} || two fingers: ${JSON.stringify(seen.pinch)} || page magnified: ${JSON.stringify(seen.scale)}`);
+    if (seen) console.log(`What the page heard in "${testInfo.title}": ${seen.log.join(' | ')} || two fingers: ${JSON.stringify(seen.pinch)} || page magnified: ${JSON.stringify(seen.magnified)}`);
   });
 
   test.describe('the test phone', () => {
@@ -94,6 +94,24 @@ export function touchScenarios(test: PhoneTest): void {
       await tap(phone, (await box(phone, seat('Bass'))).centre);
       await tap(phone, (await box(phone, seat('Mildura'))).centre);
       expect(await mapState(phone)).toMatchObject({ selected: 'Mildura', card: 'Mildura', pointed: null });
+    });
+
+    test('selects each of a dozen seats at the first touch', async ({ phone }) => {
+      // Safari sends no click for a tap it takes to be a hover, and one tap that goes unanswered now and then
+      // is easy to miss. So a spread of seats is tapped in turn, and every one has to answer.
+      await show(phone, MAP);
+      const seats = ['Mildura', 'Benambra', 'Prahran', 'Bass', 'Geelong', 'Melbourne', 'Kew', 'Nepean', 'Lowan', 'Brunswick', 'Eildon', 'Werribee'];
+      const unanswered: string[] = [];
+      for (const name of seats) {
+        await tap(phone, (await box(phone, seat(name))).centre);
+        let selected = (await mapState(phone)).selected;
+        for (let look = 0; look < 6 && selected !== name; look += 1) {
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          selected = (await mapState(phone)).selected;
+        }
+        if (selected !== name) unanswered.push(name);
+      }
+      expect(unanswered, 'seats whose tap selected nothing').toEqual([]);
     });
 
     test('works the zoom buttons', async ({ phone }) => {

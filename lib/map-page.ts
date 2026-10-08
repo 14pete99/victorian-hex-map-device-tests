@@ -75,7 +75,7 @@ export interface TouchesSeen {
   /** How far apart the first two fingers were when the second came down, and when either last moved. Null if two never met. */
   pinch: { first: number; last: number } | null;
   /** The least and the most the browser itself magnified the page while it was being touched. */
-  scale: { min: number; max: number };
+  magnified: { least: number; most: number };
 }
 
 /**
@@ -87,7 +87,7 @@ export function watchTouches(phone: Phone): Promise<void> {
   return phone.evaluate(() => {
     const log: string[] = [];
     const down = new Map<number, { x: number; y: number }>();
-    const seen: { log: string[]; pinch: { first: number; last: number } | null; scale: { min: number; max: number } } = { log, pinch: null, scale: { min: 1, max: 1 } };
+    const seen: { log: string[]; pinch: { first: number; last: number } | null; magnified: { least: number; most: number } } = { log, pinch: null, magnified: { least: 1, most: 1 } };
     let pair: [number, number] | null = null;
     const began = performance.now();
     const note = (text: string) => {
@@ -95,8 +95,8 @@ export function watchTouches(phone: Phone): Promise<void> {
     };
     const sample = () => {
       const scale = window.visualViewport?.scale ?? 1;
-      seen.scale.min = Math.min(seen.scale.min, scale);
-      seen.scale.max = Math.max(seen.scale.max, scale);
+      seen.magnified.least = Math.min(seen.magnified.least, scale);
+      seen.magnified.most = Math.max(seen.magnified.most, scale);
     };
     const apart = () => {
       const first = pair && down.get(pair[0]);
@@ -154,8 +154,12 @@ export function watchTouches(phone: Phone): Promise<void> {
   });
 }
 
-export function touchesSeen(phone: Phone): Promise<TouchesSeen> {
-  return phone.evaluate(() => (window as unknown as { touchesSeen: TouchesSeen }).touchesSeen);
+/**
+ * The page's account, carried back as text. Appium's iOS driver edits the objects a page returns: it deletes
+ * any field called `scale`, among others, which is how a first version of this lost its magnification.
+ */
+export async function touchesSeen(phone: Phone): Promise<TouchesSeen> {
+  return JSON.parse(await phone.evaluate(() => JSON.stringify((window as unknown as { touchesSeen: unknown }).touchesSeen))) as TouchesSeen;
 }
 
 /** The zoom's limits, as in the map's `ZOOM`. */
