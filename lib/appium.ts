@@ -90,6 +90,8 @@ export const iosTest = appiumTestWith({
   'appium:webviewConnectTimeout': MINUTE,
   // Touches are made by these tests, at places they choose. Appium must not turn clicks into its own.
   'appium:nativeWebTap': false,
+  // Do not wait for Safari to fall idle before each touch: it adds seconds to every gesture.
+  'appium:waitForIdleTimeout': 0,
   // Apple's own switch for tests: no tips. Safari's first-run tip otherwise takes the first touches.
   'appium:processArguments': { args: ['-com.apple.TipKit.HideAllTips', '1'] },
 });
