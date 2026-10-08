@@ -44,19 +44,31 @@ export async function appiumPhone(driver: Browser): Promise<Phone> {
 
   // Where the page sits on the screen, and how many of the screen's units one of its pixels covers. iOS
   // counts its screen in points, which a page's pixels equal while the page is not magnified; Android
-  // counts in device pixels. One tap on an empty spot, compared with where the page felt it, gives the rest.
-  // The page starts with the empty padding the fixture adds, so a tap a third of the way down hits nothing.
+  // counts in device pixels. One tap, compared with where the page felt it, gives the rest.
+  //
+  // The tap lands on a sheet laid over the whole page for the purpose. Safari passes a touch to a page only
+  // where it knows something is listening, and it learns that when the page is next drawn; a listener
+  // quietly added to the window, over a part of the page with nothing on it, hears nothing.
   const scale = await driver.execute(() => {
     window.scrollTo({ top: 0, behavior: 'instant' });
+    const sheet = document.createElement('div');
+    sheet.id = 'finding-the-page';
+    sheet.style.cssText = 'position: fixed; inset: 0; z-index: 2147483647; background: transparent; touch-action: none;';
     // Every kind of event a touch can cause is noted, so a tap that goes unfelt can still say what did arrive.
     const heard: string[] = [];
-    Object.assign(window, { heard });
-    for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'touchstart', 'touchend', 'touchcancel', 'mousedown', 'click']) {
-      window.addEventListener(type, (event) => heard.push(`${type}@${Math.round((event as MouseEvent).clientX ?? -1)},${Math.round((event as MouseEvent).clientY ?? -1)}`), true);
-    }
-    window.addEventListener('pointerdown', (event) => Object.assign(window, { felt: { x: event.clientX, y: event.clientY } }), { once: true, capture: true });
+    Object.assign(window, { heard, felt: null });
+    const feel = (x: number, y: number) => {
+      const state = window as unknown as { felt: { x: number; y: number } | null };
+      state.felt ??= { x, y };
+    };
+    sheet.addEventListener('pointerdown', (event) => feel(event.clientX, event.clientY));
+    sheet.addEventListener('touchstart', (event) => feel(event.touches[0].clientX, event.touches[0].clientY));
+    for (const type of ['pointerdown', 'pointerup', 'pointercancel', 'touchstart', 'touchend', 'touchcancel', 'mousedown', 'click']) sheet.addEventListener(type, () => heard.push(type));
+    document.body.append(sheet);
     return window.devicePixelRatio;
   });
+  // Time for the page to be drawn with the sheet on it.
+  await driver.pause(500);
   const unit = driver.isAndroid ? scale : 1;
   const size = await natively(() => driver.getWindowRect());
   const tapped = { x: Math.round(size.width / 2), y: Math.round(size.height / 3) };
@@ -66,7 +78,7 @@ export async function appiumPhone(driver: Browser): Promise<Phone> {
   // time may also have a tip or a prompt on the screen, so whatever offers to be closed is closed first.
   const ways: [string, () => Promise<unknown>][] = [
     ['a touch of 100 ms', () => press(3)],
-    ['the phone\'s own tap', () => (driver.isIOS ? natively(() => driver.execute('mobile: tap', { x: tapped.x, y: tapped.y })) : press(3))],
+    ["the phone's own tap", () => (driver.isIOS ? natively(() => driver.execute('mobile: tap', { x: tapped.x, y: tapped.y })) : press(3))],
     ['a touch of 300 ms', () => press(7)],
   ];
   let felt: Point | null = null;
@@ -76,14 +88,25 @@ export async function appiumPhone(driver: Browser): Promise<Phone> {
     await natively(() => closeWhatIsInTheWay(driver));
     await tap().catch((error: unknown) => tried.push(`${name} failed: ${String(error).split('\n')[0]}`));
     for (let look = 0; look < 20 && !felt; look += 1) {
-      felt = await driver.execute(() => (window as unknown as { felt?: Point }).felt ?? null);
+      felt = await driver.execute(() => (window as unknown as { felt: Point | null }).felt);
       if (!felt) await driver.pause(100);
     }
     tried.push(`${name}: ${felt ? 'felt' : 'not felt'}`);
   }
-  const heard = await driver.execute(() => ({ events: (window as unknown as { heard: string[] }).heard, focused: document.hasFocus(), visible: document.visibilityState, width: window.innerWidth, height: window.innerHeight }));
-  console.log(`Finding the page on the screen: tapped ${tapped.x},${tapped.y} of ${size.width}x${size.height}. ${tried.join('; ')}. The page heard ${JSON.stringify(heard)}`);
-  if (!felt) throw new Error(`the page did not feel a touch on the screen (${tried.join('; ')}). It heard ${JSON.stringify(heard)}`);
+  const heard = await driver.execute(() => {
+    document.getElementById('finding-the-page')?.remove();
+    return { events: (window as unknown as { heard: string[] }).heard, focused: document.hasFocus(), visible: document.visibilityState, width: window.innerWidth, height: window.innerHeight, scrollY: window.scrollY };
+  });
+  let report = `tapped ${tapped.x},${tapped.y} of ${size.width}x${size.height}. ${tried.join('; ')}. The page heard ${JSON.stringify(heard)}`;
+  if (!felt) {
+    // A swipe needs no listener to scroll a page, so it shows whether touches reach the browser at all.
+    const centre = { x: tapped.x, y: Math.round(size.height * 0.6) };
+    await play(toActions(Array.from({ length: 8 }, (_, step) => [{ x: centre.x, y: centre.y - step * 30 }]), (point) => point, APPIUM_FRAME_MS)).catch(() => undefined);
+    await driver.pause(500);
+    report += `. A swipe up the screen then scrolled the page by ${await driver.execute(() => Math.round(window.scrollY))} pixels`;
+  }
+  console.log(`Finding the page on the screen: ${report}`);
+  if (!felt) throw new Error(`the page did not feel a touch on the screen: ${report}`);
   const origin = felt;
   const onScreen = (point: Point): Point => ({ x: tapped.x + (point.x - origin.x) * unit, y: tapped.y + (point.y - origin.y) * unit });
 
