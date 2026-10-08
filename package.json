@@ -1,0 +1,23 @@
+{
+  "name": "victorian-hex-map-device-tests",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "MIT",
+  "description": "Phone gesture tests for the Victorian hexagon map: taps, drags and pinches sent as real touch input",
+  "scripts": {
+    "test": "playwright test --project=unit --project=chrome-touch --project=chrome-mouse",
+    "test:android": "playwright test --project=android-chrome --project=android-screen",
+    "test:ios": "playwright test --project=ios-safari",
+    "android:start": "node --env-file-if-exists=.env scripts/emulator.mjs start",
+    "android:stop": "node --env-file-if-exists=.env scripts/emulator.mjs stop",
+    "android:status": "node --env-file-if-exists=.env scripts/emulator.mjs status",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.0",
+    "@types/node": "^24.19.1",
+    "typescript": "^7.0.2",
+    "webdriverio": "^10.0.1"
+  }
+}
