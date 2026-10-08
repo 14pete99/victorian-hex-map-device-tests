@@ -57,6 +57,8 @@ gh run download --name ios-safari-results    # Appium's log, and a picture of th
 | `map_ref` | Branch, tag or commit of the map repository to test. `main` unless given. |
 | `grep` | Run only the tests whose names match this |
 
+A run takes about twenty minutes of a GitHub-hosted Mac, most of it building Apple's test runner. Be sparing with them: try a change through `android-appium` on the emulator first, which runs the same Appium code and costs nothing.
+
 On a Mac of your own, with Xcode installed:
 
 ```bash
@@ -85,13 +87,15 @@ What each one is worth:
 - **`chrome-touch`** runs in seconds and uses the engine Chrome for Android uses, so it catches mistakes in how the map handles touch. It is not Android: there is no address bar, no pull-to-refresh and no system gestures.
 - **`android-chrome`** is the real browser. Its touches still enter through Chrome's debugging protocol, which reads gestures slightly differently from Chrome's handling of the screen. One difference is known: two quick taps on a button with no `touch-action` are read as a double-tap that magnifies the page, which the same taps on the screen are not.
 - **`android-screen`** is the closest to a finger. Each frame of a gesture is written to the touchscreen's input device, so a touch passes through the kernel, Android's input system and Chrome's handling of the screen before the page hears of it.
+- **`ios-safari`** is the only one that is Safari, and Safari differs. It found that a tap which makes a link appear gets no click, which left four seats impossible to select on an iPhone and which no other project could show. It is a simulator driven by Apple's test framework, with two limits. A finger that lands after another arrives as a touch, a lift and a touch again. And a third finger is reported under shuffled identities, so that scenario is left out here.
 - **`android-appium`** is not needed to test Android; `android-screen` does that better. It exists because it runs the same Appium code as `ios-safari`, which cannot be tried without a Mac. It needs an Appium server with the `uiautomator2` driver, started with `--allow-insecure uiautomator2:chromedriver_autodownload`, and it leaves out four scenarios Appium's Android driver cannot play (the project's entry in `playwright.config.ts` says why).
 
 ## How the tests are written
 
 - `lib/phone.ts` is the whole of what a test may do to a phone: run a function in the page, and play a gesture. A gesture is a list of frames, each saying where every finger is.
-- `lib/chrome-touch.ts` plays those frames through the DevTools protocol, `lib/android-screen.ts` writes them to an Android touchscreen, and `lib/ios-safari.ts` hands them to Appium. Another browser needs only another file like them.
+- `lib/chrome-touch.ts` plays those frames through the DevTools protocol, `lib/android-screen.ts` writes them to an Android touchscreen, and `lib/appium-phone.ts` hands them to Appium. Another browser needs only another file like them.
 - `lib/gestures.ts` builds taps, drags and pinches out of frames. `lib/map-page.ts` reads the demo.
 - `scenarios/touch.ts` holds the gestures. It names no browser, and each file in `tests/` hands it one kind of phone.
+- A phone does not put fingers exactly where a test sends them. So the page keeps its own account of the touches it receives (`watchTouches` in `lib/map-page.ts`), a pinch is judged against that, and a failing test prints it.
 
 A test never dispatches an event from a script. Scripted events skip the browser's own scrolling, pinch-zoom and tap handling, and those are what the tests are for.
