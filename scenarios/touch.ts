@@ -96,11 +96,21 @@ export function touchScenarios(test: PhoneTest): void {
       expect(await mapState(phone)).toMatchObject({ selected: 'Mildura', card: 'Mildura', pointed: null });
     });
 
-    test('selects each of a dozen seats at the first touch', async ({ phone }) => {
-      // Safari sends no click for a tap it takes to be a hover, and one tap that goes unanswered now and then
-      // is easy to miss. So a spread of seats is tapped in turn, and every one has to answer.
+    test('selects every seat it lands on, and never merely points at one', async ({ phone }) => {
+      // Safari sends no click for a tap that makes a link or a button appear: it takes the tap for a hover.
+      // The demo's seat card has a link for the four seats that have changed since 2022, and when the card
+      // followed a finger as it follows a mouse, those four could not be selected on an iPhone. So a spread
+      // of seats is tapped, those four among them, and every one has to answer.
       await show(phone, MAP);
-      const seats = ['Mildura', 'Benambra', 'Prahran', 'Bass', 'Geelong', 'Melbourne', 'Kew', 'Nepean', 'Lowan', 'Brunswick', 'Eildon', 'Werribee'];
+      const seats = ['Mildura', 'Benambra', 'Prahran', 'Bass', 'Geelong', 'Melbourne', 'Kew', 'Ringwood', 'Nepean', 'Lowan', 'Brunswick', 'Eildon', 'South Barwon', 'Werribee'];
+      // A finger is not a pointer that hovers, so the ring that marks the pointed-at seat must never be drawn for one.
+      await phone.evaluate(() => {
+        const state = { pointed: 0 };
+        Object.assign(window, { ringsSeen: state });
+        new MutationObserver(() => {
+          if (document.querySelector('[data-testid="hex-highlight"][data-kind="pointed"]')) state.pointed += 1;
+        }).observe(document.querySelector('[data-testid="map-svg"]') as Node, { childList: true, subtree: true });
+      });
       const unanswered: string[] = [];
       for (const name of seats) {
         await tap(phone, (await box(phone, seat(name))).centre);
@@ -112,6 +122,7 @@ export function touchScenarios(test: PhoneTest): void {
         if (selected !== name) unanswered.push(name);
       }
       expect(unanswered, 'seats whose tap selected nothing').toEqual([]);
+      expect(await phone.evaluate(() => (window as unknown as { ringsSeen: { pointed: number } }).ringsSeen.pointed), 'times the pointed-at ring was drawn for a finger').toBe(0);
     });
 
     test('works the zoom buttons', async ({ phone }) => {

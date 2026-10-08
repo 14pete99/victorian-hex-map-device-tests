@@ -57,6 +57,9 @@ export default defineConfig({
       name: 'ios-safari',
       testMatch: /ios-safari\.spec\.ts$/,
       timeout: 180_000,
+      // Apple's test framework cannot add a third finger to two already down: the simulator then reports the
+      // three under shuffled identities, so the map is shown a pinch that nobody made. The Android projects run it.
+      grepInvert: /a third finger/,
     },
     {
       // Chrome for Android through Appium: a way to try the code iOS uses without a Mac.
