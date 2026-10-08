@@ -1,0 +1,103 @@
+# Phone gesture tests in Mobile Safari, on the iOS Simulator of a GitHub-hosted Mac.
+#
+# This workflow runs only when someone starts it by hand: the Actions tab, "iOS Safari", "Run workflow".
+# Nothing here runs on a push or a pull request.
+name: iOS Safari
+
+on:
+  workflow_dispatch:
+    inputs:
+      map_ref:
+        description: Branch, tag or commit of the map repository to test
+        required: true
+        default: main
+      grep:
+        description: Run only the tests whose names match this. Leave empty to run them all.
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  safari:
+    name: Touch scenarios in Mobile Safari
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      # Where the map is checked out, for the tests to serve its demo from.
+      MAP_REPO: map
+      APPIUM_VERSION: 3.8.0
+      XCUITEST_DRIVER_VERSION: 12.16.0
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out the map
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: 14pete99/victorian-hex-map
+          ref: ${{ inputs.map_ref }}
+          path: map
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Install the tests' packages
+        run: npm ci --ignore-scripts
+
+      - name: Install the map's packages
+        run: npm ci --ignore-scripts
+        working-directory: map
+
+      - name: Install Appium and its iOS driver
+        run: |
+          npm install --global "appium@$APPIUM_VERSION"
+          appium driver install "xcuitest@$XCUITEST_DRIVER_VERSION"
+
+      - name: Start an iPhone simulator
+        run: |
+          xcodebuild -version
+          udid=$(xcrun simctl list devices available --json | node scripts/pick-simulator.mjs)
+          echo "IOS_UDID=$udid" >> "$GITHUB_ENV"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid" -b
+
+      - name: Start Appium
+        run: |
+          appium --address 127.0.0.1 --port 4723 --log appium.log --log-level info --log-timestamp --log-no-colors > /dev/null 2>&1 &
+          for attempt in $(seq 1 60); do
+            if curl --silent --fail http://127.0.0.1:4723/status > /dev/null; then exit 0; fi
+            sleep 1
+          done
+          echo "Appium did not start within a minute."
+          cat appium.log
+          exit 1
+
+      - name: Run the touch scenarios
+        env:
+          GREP: ${{ inputs.grep }}
+        run: |
+          if [ -n "$GREP" ]; then
+            npx playwright test --project=ios-safari --grep "$GREP"
+          else
+            npx playwright test --project=ios-safari
+          fi
+
+      - name: Keep the logs and screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ios-safari-results
+          path: |
+            appium.log
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
