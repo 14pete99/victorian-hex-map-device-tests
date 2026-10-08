@@ -62,13 +62,23 @@ jobs:
           npm install --global "appium@$APPIUM_VERSION"
           appium driver install "xcuitest@$XCUITEST_DRIVER_VERSION"
 
-      - name: Start an iPhone simulator
+      - name: Choose an iPhone simulator
         run: |
           xcodebuild -version
-          udid=$(xcrun simctl list devices available --json | node scripts/pick-simulator.mjs)
-          echo "IOS_UDID=$udid" >> "$GITHUB_ENV"
-          xcrun simctl boot "$udid"
-          xcrun simctl bootstatus "$udid" -b
+          xcrun simctl list devices available --json | node scripts/pick-simulator.mjs >> "$GITHUB_ENV"
+
+      - name: Start the simulator
+        run: |
+          xcrun simctl boot "$IOS_UDID"
+          xcrun simctl bootstatus "$IOS_UDID" -b
+          # Apple's switch for tests: no tips. Safari's first-run tip would otherwise take the first touches.
+          xcrun simctl spawn "$IOS_UDID" defaults write com.apple.mobilesafari com.apple.TipKit.HideAllTips -bool YES
+          xcrun simctl spawn "$IOS_UDID" defaults write -g com.apple.TipKit.HideAllTips -bool YES
+
+      - name: Build Apple's test runner for the simulator
+        # Appium would build it during the first session otherwise, which takes long enough for that session to time out.
+        # If this step cannot, the first session still builds it, and the tests try again.
+        run: appium driver run xcuitest build-wda --name="$IOS_NAME" --sdk="$IOS_VERSION" || echo "The test runner was not built ahead of time."
 
       - name: Start Appium
         run: |

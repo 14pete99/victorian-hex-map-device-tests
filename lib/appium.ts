@@ -19,18 +19,29 @@ const appiumTestWith = (capabilities: Record<string, unknown>) =>
         const port = new URL(workerInfo.project.use.baseURL ?? 'http://127.0.0.1/').port;
         if (capabilities.platformName === 'Android' && port) execFileSync(ADB, ['reverse', `tcp:${port}`, `tcp:${port}`]);
         const appium = new URL(process.env.APPIUM_URL ?? 'http://127.0.0.1:4723');
-        const driver = await remote({
-          protocol: appium.protocol.replace(':', ''),
-          hostname: appium.hostname,
-          port: Number(appium.port || 4723),
-          path: appium.pathname,
-          logLevel: 'warn',
-          // The first session on an iPhone simulator builds Apple's test runner for it, which takes minutes.
-          connectionRetryTimeout: 25 * MINUTE,
-          connectionRetryCount: 0,
-          // WebdriverIO would otherwise try the newer BiDi protocol, which Appium's drivers do not speak.
-          capabilities: { 'wdio:enforceWebDriverClassic': true, 'appium:newCommandTimeout': 300, ...capabilities },
-        });
+        const open = () =>
+          remote({
+            protocol: appium.protocol.replace(':', ''),
+            hostname: appium.hostname,
+            port: Number(appium.port || 4723),
+            path: appium.pathname,
+            logLevel: 'warn',
+            connectionRetryTimeout: 25 * MINUTE,
+            connectionRetryCount: 0,
+            // WebdriverIO would otherwise try the newer BiDi protocol, which Appium's drivers do not speak.
+            capabilities: { 'wdio:enforceWebDriverClassic': true, 'appium:newCommandTimeout': 300, ...capabilities },
+          });
+        // The first session on a new iPhone simulator waits while Apple's test runner is built for it. That takes
+        // minutes, and the connection can drop before it is done; by the next try the build has finished.
+        let driver: Browser | undefined;
+        for (let attempt = 1; !driver; attempt += 1) {
+          try {
+            driver = await open();
+          } catch (error) {
+            if (attempt === 3) throw error;
+            await new Promise((resolve) => setTimeout(resolve, 20_000));
+          }
+        }
         await use(driver);
         await driver.deleteSession();
       },
@@ -79,6 +90,8 @@ export const iosTest = appiumTestWith({
   'appium:webviewConnectTimeout': MINUTE,
   // Touches are made by these tests, at places they choose. Appium must not turn clicks into its own.
   'appium:nativeWebTap': false,
+  // Apple's own switch for tests: no tips. Safari's first-run tip otherwise takes the first touches.
+  'appium:processArguments': { args: ['-com.apple.TipKit.HideAllTips', '1'] },
 });
 
 /**

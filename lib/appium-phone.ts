@@ -13,6 +13,16 @@ const NATIVE = 'NATIVE_APP';
  */
 const APPIUM_FRAME_MS = 50;
 
+/**
+ * Presses any button on the screen that closes something. Safari on a new iPhone opens with a tip about its
+ * menus, in a bubble that takes every touch until it is closed. Called in the native context.
+ */
+async function closeWhatIsInTheWay(driver: Browser): Promise<void> {
+  if (!driver.isIOS) return;
+  const buttons = await driver.$$('-ios predicate string:type == "XCUIElementTypeButton" AND (label ==[c] "Close" OR label ==[c] "Dismiss" OR label ==[c] "Close tip")');
+  for (const button of buttons) await button.click().catch(() => undefined);
+}
+
 export async function appiumPhone(driver: Browser): Promise<Phone> {
   const web = String(await driver.getAppiumContext());
 
@@ -44,13 +54,18 @@ export async function appiumPhone(driver: Browser): Promise<Phone> {
   const unit = driver.isAndroid ? scale : 1;
   const size = await natively(() => driver.getWindowRect());
   const tapped = { x: Math.round(size.width / 2), y: Math.round(size.height / 3) };
-  await play(toActions([[tapped], [tapped]], (point) => point));
   let felt: Point | null = null;
-  for (let attempt = 0; attempt < 50 && !felt; attempt += 1) {
-    felt = await driver.execute(() => (window as unknown as { felt?: Point }).felt ?? null);
-    if (!felt) await driver.pause(100);
+  // A browser opened for the first time may have a tip or a prompt of its own on the screen, and the first
+  // touch can go to closing it. So the tap is made up to three times, closing whatever offers to be closed.
+  for (let tap = 0; tap < 3 && !felt; tap += 1) {
+    await natively(() => closeWhatIsInTheWay(driver));
+    await play(toActions([[tapped], [tapped]], (point) => point));
+    for (let look = 0; look < 20 && !felt; look += 1) {
+      felt = await driver.execute(() => (window as unknown as { felt?: Point }).felt ?? null);
+      if (!felt) await driver.pause(100);
+    }
   }
-  if (!felt) throw new Error('the page did not feel a touch on the screen');
+  if (!felt) throw new Error(`the page did not feel a touch on the screen. What the screen held:\n${await natively(() => driver.getPageSource()).catch(() => '(could not be read)')}`);
   const origin = felt;
   const onScreen = (point: Point): Point => ({ x: tapped.x + (point.x - origin.x) * unit, y: tapped.y + (point.y - origin.y) * unit });
 

@@ -1,5 +1,6 @@
-// Prints the id of an iPhone simulator to test on: the newest iOS installed, and a plain recent iPhone
-// if there is one. Reads the output of `xcrun simctl list devices available --json` on standard input.
+// Picks an iPhone simulator to test on: the newest iOS installed, and a plain recent iPhone if there is
+// one. Reads the output of `xcrun simctl list devices available --json` on standard input, and prints the
+// phone as IOS_UDID, IOS_NAME and IOS_VERSION lines, the form a GitHub workflow's environment file takes.
 //
 // Usage: xcrun simctl list devices available --json | node scripts/pick-simulator.mjs
 import { readFileSync } from 'node:fs';
@@ -26,5 +27,5 @@ if (process.argv[1] && import.meta.url.endsWith(process.argv[1].replaceAll('\\',
   const picked = pickSimulator(JSON.parse(readFileSync(0, 'utf8')));
   if (!picked) throw new Error('No iPhone simulator is installed.');
   console.error(`Using ${picked.name} with iOS ${picked.ios}`);
-  console.log(picked.udid);
+  console.log(`IOS_UDID=${picked.udid}\nIOS_NAME=${picked.name}\nIOS_VERSION=${picked.ios}`);
 }
